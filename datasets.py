@@ -468,7 +468,7 @@ class MSCOCODatabase(Dataset):
         return raw_image, image, target
 
 
-class CC3MDataset(IterableDataset):
+class CCDataset(IterableDataset):
     def __init__(self, path, resolution=256):
         import webdataset as wds
     
@@ -481,13 +481,17 @@ class CC3MDataset(IterableDataset):
             raw_image = sample["image"]
             raw_image = raw_image.convert("RGB")
 
-            raw_image = np.array(raw_image).astype(np.uint8)
-            raw_image = center_crop(self.resolution, self.resolution, raw_image).astype(np.float32)
-            image = (raw_image / 127.5 - 1.0).astype(np.float32)
+            np_image = np.array(raw_image).astype(np.uint8)
+            cropped_image = center_crop(self.resolution, self.resolution, np_image).astype(np.float32)
+            image = (cropped_image / 127.5 - 1.0).astype(np.float32)
             image = einops.rearrange(image, 'h w c -> c h w')
 
             caption = sample["caption"]
-            yield raw_image, image, caption, sample["__key__"]
+            yield (
+                raw_image, image, caption, sample["__key__"], 
+                sample["__url__"], sample["__local_path__"], 
+                sample["json"]
+            )
 
 def get_feature_dir_info(root):
     files = glob.glob(os.path.join(root, '*.npy'))
