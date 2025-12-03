@@ -10,7 +10,7 @@ import argparse
 from tqdm import tqdm
 from PIL import Image
 
-from datasets import CC3MDataset
+from datasets import CCDataset as CC3MDataset
 
 
 def main(resolution=256):

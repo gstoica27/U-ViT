@@ -18,7 +18,8 @@ def main():
     clip.eval()
     clip.to(device)
 
-    save_dir = f'assets/datasets/coco256_features'
+    # save_dir = f'/weka/prior-default/georges/datasets/mscoco256_features'
+    save_dir = '/weka/oe-training-default/georges/datasets/mscoco256_featuresv2'
     latent = clip.encode(prompts)
     print(latent.shape)
     c = latent[0].detach().cpu().numpy()

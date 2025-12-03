@@ -29,11 +29,14 @@ def main():
     clip.eval()
     clip.to(device)
 
-    save_dir = f'assets/datasets/coco256_features/run_vis'
+    # save_dir = f'/weka/prior-default/georges/datasets/mscoco256_features/run_vis'
+    save_dir = f'/weka/oe-training-default/georges/datasets/mscoco256_featuresv2/run_vis'
     latent = clip.encode(prompts)
     for i in range(len(latent)):
         c = latent[i].detach().cpu().numpy()
-        np.save(os.path.join(save_dir, f'{i}.npy'), (prompts[i], c))
+        # import pdb; pdb.set_trace()
+        # np.save(os.path.join(save_dir, f'{i}.npy'), (prompts[i], c))
+        np.savez(os.path.join(save_dir, str(i)), prompt=prompts[i], context=c)
 
 
 if __name__ == '__main__':
