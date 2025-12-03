@@ -18,7 +18,63 @@ def detach_and_to_cpu(tensor):
     return tensor.detach().cpu().numpy()
 
 
-def preprocess_data(tarfiles, output_dir, clip_model_name='hf-hub:timm/ViT-SO400M-16-SigLIP2-384', resolution=256):
+def process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink):
+    # Separate batch components
+    raw_images = [ex[0] for ex in batch]
+    cropped_images = [ex[1] for ex in batch]
+    captions = [ex[2] for ex in batch]
+    keys = [ex[3] for ex in batch]
+    urls = [ex[4] for ex in batch]
+    local_paths = [ex[5] for ex in batch]
+    jsons = [ex[6] for ex in batch]
+    # pdb.set_trace()
+    # Batch process cropped images through autoencoder
+    cropped_images_batch = []
+    for cropped_image in cropped_images:
+        if len(cropped_image.shape) == 3:
+            cropped_image = cropped_image[None, ...]
+        cropped_images_batch.append(torch.from_numpy(cropped_image))
+    cropped_images_batch = torch.cat(cropped_images_batch, dim=0).to(device)
+    # pdb.set_trace()
+    # Encode moments in batch
+    moments_batch = autoencoder(cropped_images_batch, fn="encode_moments").detach().cpu().numpy()
+    cropped_images_batch_cpu = cropped_images_batch.detach().cpu().numpy()
+    
+    # Batch process images through CLIP
+    preprocessed_images = torch.stack([preprocessor(img) for img in raw_images]).to(device)
+    image_encodings_batch = clip_model.encode_image(preprocessed_images, normalize=True).detach().cpu().numpy()
+    
+    # Batch process text through CLIP
+    tokenized_captions = tokenizer(captions).to(device)
+    text_encodings_batch = clip_model.encode_text(tokenized_captions, normalize=True).detach().cpu().numpy()
+    text_hiddens_batch = clip_model.forward_intermediates(
+        text=tokenized_captions, intermediates_only=True, normalize_intermediates=False
+    )['text_intermediates'][-1].detach().cpu().numpy()
+    
+    # Write individual samples
+    for i in range(len(batch)):
+        buffer = io.BytesIO()
+        raw_images[i].save(buffer, format="JPEG")
+        raw_image_bytes = buffer.getvalue()
+        buffer.close()
+
+        save_dict = {
+            "raw_image.jpg": raw_image_bytes,
+            "cropped_image.npy": cropped_images_batch_cpu[i],
+            "caption.txt": captions[i],
+            "moments.npy": moments_batch[i],
+            "text_hidden.npy": text_hiddens_batch[i],
+            "image_encoding.npy": image_encodings_batch[i],
+            "text_encoding.npy": text_encodings_batch[i],
+            "__key__": keys[i],
+            "__url__": urls[i],
+            "__local_path__": local_paths[i],
+            "json.json": jsons[i]
+        }
+        sink.write(save_dict)
+
+
+def preprocess_data(tarfiles, output_dir, clip_model_name='hf-hub:timm/ViT-SO400M-16-SigLIP2-384', resolution=256, batch_size=32):
     dataset = CCDataset(path=tarfiles, resolution=resolution)
     device = "cuda"
     os.makedirs(output_dir, exist_ok=True)
@@ -34,43 +90,17 @@ def preprocess_data(tarfiles, output_dir, clip_model_name='hf-hub:timm/ViT-SO400
     sink = wds.ShardWriter(os.path.join(output_dir, "shard-%06d.tar"), maxcount=1000)
 
     with torch.no_grad():
+        batch = []
         for _, example in tqdm(enumerate(dataset)):
-            raw_image, cropped_image, caption, key, url, local_path, json_ = example
-            # pdb.set_trace()
-            if len(cropped_image.shape) == 3:
-                cropped_image = cropped_image[None, ...]
-            cropped_image = torch.from_numpy(cropped_image).to(device)
-            moments = autoencoder(cropped_image, fn="encode_moments").squeeze(0).detach().cpu().numpy()
-            cropped_image = detach_and_to_cpu(cropped_image)
+            batch.append(example)
             
-            image_encoding = detach_and_to_cpu(
-                clip_model.encode_image(preprocessor(raw_image)[None].to(device), normalize=True)
-            )
-            tokenized_caption = tokenizer([caption]).to(device)
-            text_encoding = detach_and_to_cpu(clip_model.encode_text(tokenized_caption, normalize=True))
-            text_hidden = detach_and_to_cpu(clip_model.forward_intermediates(
-                text=tokenized_caption, intermediates_only=True, normalize_intermediates=False
-            )['text_intermediates'][-1])
-            
-            buffer = io.BytesIO()
-            raw_image.save(buffer, format="JPEG")
-            raw_image_bytes = buffer.getvalue()
-            buffer.close()
-
-            save_dict = {
-                "raw_image.jpg": raw_image_bytes,
-                "cropped_image.npy": cropped_image,
-                "caption.txt": caption,
-                "moments.npy": moments,
-                "text_hidden.npy": text_hidden,
-                "image_encoding.npy": image_encoding,
-                "text_encoding.npy": text_encoding,
-                "__key__": key,
-                "__url__": url,
-                "__local_path__": local_path,
-                "json": json_
-            }
-            sink.write(save_dict)
+            if len(batch) == batch_size:
+                process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink)
+                batch = []
+        
+        # Process remaining batch
+        if len(batch) > 0:
+            process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink)
 
 
 def main():
@@ -99,6 +129,10 @@ def main():
         "--clip-model-name", type=str, default='hf-hub:timm/ViT-SO400M-16-SigLIP2-384', 
         help="CLIP model name for feature extraction"
     )
+    parser.add_argument(
+        "--batch-size", type=int, default=32, 
+        help="Batch size for processing"
+    )
     args = parser.parse_args()
 
     tarfiles = [
@@ -109,7 +143,8 @@ def main():
     preprocess_data(
         tarfiles, args.output_dir, 
         clip_model_name=args.clip_model_name, 
-        resolution=args.resolution
+        resolution=args.resolution,
+        batch_size=args.batch_size
     )
 
 
