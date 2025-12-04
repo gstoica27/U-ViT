@@ -1,4 +1,4 @@
-name: repa2
+name: uvit_cc12m
 channels:
   - conda-forge
   - defaults
