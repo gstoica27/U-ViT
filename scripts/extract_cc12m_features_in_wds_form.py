@@ -53,10 +53,14 @@ def process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokeni
     
     # Write individual samples
     for i in range(len(batch)):
-        buffer = io.BytesIO()
-        raw_images[i].save(buffer, format="JPEG")
-        raw_image_bytes = buffer.getvalue()
-        buffer.close()
+        try:
+            buffer = io.BytesIO()
+            raw_images[i].save(buffer, format="JPEG")
+            raw_image_bytes = buffer.getvalue()
+            buffer.close()
+        except:
+            print(f"Skipping key={keys[i]} due to image error: {e}")
+            continue
 
         save_dict = {
             "raw_image.jpg": raw_image_bytes,
