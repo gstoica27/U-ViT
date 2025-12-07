@@ -120,7 +120,7 @@ def process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokeni
     )['text_intermediates'][-1].detach().cpu().numpy()
     
     # Write individual samples
-    for i in range(len(batch)):
+    for i in range(len(valid_idxs)):
         try:
             buffer = io.BytesIO()
             raw_images[i].save(buffer, format="JPEG")
