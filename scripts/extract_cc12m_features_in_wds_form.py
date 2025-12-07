@@ -18,7 +18,62 @@ def detach_and_to_cpu(tensor):
     return tensor.detach().cpu().numpy()
 
 
-def process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink):
+def find_bad_tars(output_dir):
+    bad = []
+    for fname in sorted(os.listdir(output_dir)):
+        if not fname.endswith(".tar"):
+            continue
+        path = os.path.join(output_dir, fname)
+        try:
+            with tarfile.open(path, "r") as tf:
+                # iterate through all members to catch truncation errors
+                for _ in tf:
+                    pass
+        except (tarfile.ReadError, EOFError, OSError) as e:
+            print(f"[BROKEN] {path} ({type(e).__name__}: {e})")
+            bad.append(path)
+    return bad
+
+
+def delete_bad_tars(output_dir, dry_run=False):
+    bad = find_bad_tars(output_dir)
+    if not bad:
+        print("No corrupt .tar files found.")
+        return
+
+    print("\nCorrupt tar files:")
+    for path in bad:
+        print("  ", path)
+
+    if dry_run:
+        print("\n[DRY RUN] Not deleting anything. "
+              "Call delete_bad_tars(output_dir, dry_run=False) to actually delete.")
+        return
+
+    for path in bad:
+        print(f"[DELETE] {path}")
+        os.remove(path)
+
+
+def get_existing_keys(output_dir):
+    tarfiles = [
+        os.path.join(output_dir, f)
+        for f in os.listdir(output_dir)
+        if f.endswith(".tar")
+    ]
+    
+    existing_keys = set()
+    if len(tarfiles) == 0:
+        return existing_keys
+    # pdb.set_trace()
+    dataset = wds.WebDataset(tarfiles)
+    for sample in tqdm(dataset):
+        existing_keys.add(sample["__key__"])
+    return existing_keys
+
+
+
+def process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink, existing_keys=set()):
     # Separate batch components
     raw_images = [ex[0] for ex in batch]
     cropped_images = [ex[1] for ex in batch]
@@ -27,6 +82,19 @@ def process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokeni
     urls = [ex[4] for ex in batch]
     local_paths = [ex[5] for ex in batch]
     jsons = [ex[6] for ex in batch]
+    
+    valid_idxs = [i for i, key in enumerate(keys) if key not in existing_keys]
+    if len(valid_idxs) == 0:
+        return
+    # pdb.set_trace()
+    raw_images = [raw_images[i] for i in valid_idxs]
+    cropped_images = [cropped_images[i] for i in valid_idxs]
+    captions = [captions[i] for i in valid_idxs]
+    keys = [keys[i] for i in valid_idxs]
+    urls = [urls[i] for i in valid_idxs]
+    local_paths = [local_paths[i] for i in valid_idxs]
+    jsons = [jsons[i] for i in valid_idxs]
+
     # pdb.set_trace()
     # Batch process cropped images through autoencoder
     cropped_images_batch = []
@@ -79,6 +147,7 @@ def process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokeni
 
 
 def preprocess_data(tarfiles, output_dir, clip_model_name='hf-hub:timm/ViT-SO400M-16-SigLIP2-384', resolution=256, batch_size=32):
+    existing_keys = get_existing_keys(output_dir)
     dataset = CCDataset(path=tarfiles, resolution=resolution)
     device = "cuda"
     os.makedirs(output_dir, exist_ok=True)
@@ -99,12 +168,12 @@ def preprocess_data(tarfiles, output_dir, clip_model_name='hf-hub:timm/ViT-SO400
             batch.append(example)
             
             if len(batch) == batch_size:
-                process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink)
+                process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink, existing_keys)
                 batch = []
         
         # Process remaining batch
         if len(batch) > 0:
-            process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink)
+            process_and_write_batch(batch, autoencoder, clip_model, preprocessor, tokenizer, device, sink, existing_keys)
 
 
 def main():
@@ -138,6 +207,9 @@ def main():
         help="Batch size for processing"
     )
     args = parser.parse_args()
+
+    delete_bad_tars(args.output_dir)
+    # pdb.set_trace()
 
     tarfiles = [
         os.path.join(args.split_dir, f"shard_{i:06d}.tar") for i in range(
