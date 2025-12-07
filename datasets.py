@@ -474,7 +474,11 @@ class CCDataset(IterableDataset):
     
         super().__init__()
         self.resolution = resolution
-        self.dataset = wds.WebDataset(path).decode("pil").rename(image="jpg", caption="txt")
+        self.dataset = wds.WebDataset(
+            path, handler=wds.warn_and_continue
+        ).decode(
+            "pil", handler=wds.warn_and_continue
+        ).rename(image="jpg", caption="txt")
 
     def __iter__(self):
         for sample in self.dataset:
