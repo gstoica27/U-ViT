@@ -20,7 +20,7 @@ def detach_and_to_cpu(tensor):
 
 def find_bad_tars(output_dir):
     bad = []
-    for fname in sorted(os.listdir(output_dir)):
+    for fname in tqdm(sorted(os.listdir(output_dir)), desc="Checking tar files"):
         if not fname.endswith(".tar"):
             continue
         path = os.path.join(output_dir, fname)
@@ -160,7 +160,8 @@ def preprocess_data(tarfiles, output_dir, clip_model_name='hf-hub:timm/ViT-SO400
     clip_model = clip_model.eval().to(device)
     tokenizer = get_tokenizer(clip_model_name)
 
-    sink = wds.ShardWriter(os.path.join(output_dir, "shard-%06d.tar"), maxcount=1000)
+    last_shard_idx = int(sorted(os.listdir(output_dir))[-1].replace("shard-", "").replace(".tar", "")) if len(os.listdir(output_dir)) > 0 else 0
+    sink = wds.ShardWriter(os.path.join(output_dir, "shard-%06d.tar"), maxcount=1000, start_shard=last_shard_idx+1)
 
     with torch.no_grad():
         batch = []
